@@ -1,0 +1,10 @@
+# Настройки IDE
+.vscode/
+.idea/
+
+# Скомпилированные файлы
+target/
+*.class
+
+# СЕКРЕТЫ (не коммитим!)
+config.properties
