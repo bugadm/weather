@@ -1,3 +1,4 @@
+import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
@@ -17,76 +18,78 @@ public class WeatherApp {
         try (InputStream input = new FileInputStream("config.properties")) {
             properties.load(input);
         } catch (IOException e) {
-            System.out.println("Ошибка: Не найден файл config.properties.");
-            return;
-        }
-        String apiKey = properties.getProperty("yandex.api.key");
-        if (apiKey == null || apiKey.equals("ВСТАВЬ_СЮДА_СВОЙ_КЛЮЧ_ОТ_ЯНДЕКСА")) {
-            System.out.println("Ошибка: Вы не вписали реальный ключ в config.properties!");
+            System.out.println("Ошибка: Не найден файл config.properties. Создайте его в корне проекта.");
             return;
         }
 
-        String graphqlQuery = """
-                {
-                  weatherByPoint(request: { lat: 55.75, lon: 37.62 }) {
-                    now {
-                      temperature
-                    }
-                    forecast {
-                      days(limit: 3) {
-                        day {
-                          tempAvg
-                        }
-                      }
-                    }
-                  }
-                }
-                """;
+        String apiKey = properties.getProperty("yandex.api.key");
+        if (apiKey == null || apiKey.isBlank() || apiKey.equals("ВСТАВЬ_СЮДА_СВОЙ_КЛЮЧ_ОТ_ЯНДЕКСА")) {
+            System.out.println("Ошибка: Впишите реальный ключ в config.properties!");
+            return;
+        }
+
+        double lat = 55.75; 
+        double lon = 37.62;
+        int limit = 3;
 
         try {
+            String urlString = String.format(
+                    "https://api.weather.yandex.ru/v2/forecast?lat=%s&lon=%s&limit=%d",
+                    lat, lon, limit
+            );
+
             HttpClient client = HttpClient.newHttpClient();
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create("https://api.weather.yandex.ru/graphql/query"))
+                    .uri(URI.create(urlString))
                     .header("X-Yandex-Weather-Key", apiKey)
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString("{\"query\":\"" + graphqlQuery.replace("\"", "\\\"").replace("\n", " ") + "\"}"))
+                    .GET()
                     .build();
 
-            System.out.println("Отправляем GraphQL-запрос к API Яндекс.Погоды (v3)...");
+            System.out.println("Отправляем запрос к API Яндекс.Погоды (v2)...");
+            
             HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
-                System.out.println("Ошибка HTTP. Код: " + response.statusCode());
-                System.out.println(response.body());
+                System.out.println("Ошибка HTTP. Код ответа: " + response.statusCode());
+                System.out.println("Ответ сервера: " + response.body());
                 return;
             }
 
             String jsonResponse = response.body();
-            System.out.println("\n=== ПОЛНЫЙ JSON ОТВЕТ (v3) ===");
+
+            System.out.println("\n=== ПОЛНЫЙ JSON ОТВЕТ ===");
             System.out.println(jsonResponse);
-            System.out.println("=============================\n");
+            System.out.println("=========================\n");
 
             JsonObject root = JsonParser.parseString(jsonResponse).getAsJsonObject();
-            JsonObject data = root.getAsJsonObject("data").getAsJsonObject("weatherByPoint");
 
-            double currentTemp = data.getAsJsonObject("now").get("temperature").getAsDouble();
-            System.out.println("Текущая температура (now.temperature): " + currentTemp + "°C");
+            JsonObject fact = root.getAsJsonObject("fact");
+            double currentTemp = fact.get("temp").getAsDouble();
+            System.out.println("Текущая температура (fact.temp): " + currentTemp + "°C");
 
-            var days = data.getAsJsonObject("forecast").getAsJsonArray("days");
+            JsonArray forecasts = root.getAsJsonArray("forecasts");
             double sumTempAvg = 0;
             int count = 0;
-            for (var dayElement : days) {
-                JsonObject day = dayElement.getAsJsonObject().getAsJsonObject("day");
-                if (day != null && day.has("tempAvg")) {
-                    sumTempAvg += day.get("tempAvg").getAsDouble();
+
+            int daysToProcess = Math.min(limit, forecasts.size());
+
+            for (int i = 0; i < daysToProcess; i++) {
+                JsonObject forecastDay = forecasts.get(i).getAsJsonObject();
+                JsonObject parts = forecastDay.getAsJsonObject("parts");
+                JsonObject dayPart = parts.getAsJsonObject("day");
+                
+                if (dayPart != null && dayPart.has("temp_avg")) {
+                    double tempAvg = dayPart.get("temp_avg").getAsDouble();
+                    sumTempAvg += tempAvg;
                     count++;
                 }
             }
+
             if (count > 0) {
                 double averageTemp = sumTempAvg / count;
                 System.out.printf("Средняя температура за %d дн.: %.1f°C%n", count, averageTemp);
             } else {
-                System.out.println("Не удалось извлечь tempAvg из прогноза.");
+                System.out.println("Не удалось извлечь temp_avg из прогноза.");
             }
 
         } catch (Exception e) {
